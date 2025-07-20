@@ -92,9 +92,9 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ─── SerpAPI 설정 ────────────────────────────
-#serp_api_key = "c4ebb9a234e85458c171ee43ec2c6f43601acca2cf08751d5900a19e53a5142b"
+#serp_api_key = "7aa0eab1fe7a98a62ecb4b0376b629c18477b3ed19552e2d5bb02fb5e8ad333c"
 # ─── SerpAPI 설정 ────────────────────────────
-serp_api_key = os.getenv("SERP_API_KEY", "c4ebb9a234e85458c171ee43ec2c6f43601acca2cf08751d5900a19e53a5142b")
+serp_api_key = os.getenv("SERP_API_KEY", "7aa0eab1fe7a98a62ecb4b0376b629c18477b3ed19552e2d5bb02fb5e8ad333c")
 
 # Streamlit secrets에서 읽기 시도
 try:
