@@ -106,8 +106,9 @@ except:
 class DartDB:
     def __init__(self, db_path=None):
         if db_path is None:
-            # 배포 환경에서는 임시 디렉토리 사용 (세션 기반)
+            # 배포 환경에서는 임시 디렉토리 사용
             import tempfile
+            import os
             temp_dir = tempfile.gettempdir()
             self.db_path = os.path.join(temp_dir, "dart_analysis.db")
             
@@ -119,12 +120,19 @@ class DartDB:
         else:
             self.db_path = db_path
         
-        self.init_db()
+        # 안전한 DB 초기화
+        try:
+            self.init_db()
+        except Exception as e:
+            print(f"DB 초기화 실패, 메모리 모드로 대체: {e}")
+            # DB 초기화 실패 시 메모리 DB 사용
+            self.db_path = ":memory:"
+            self.init_db()
     
     def export_db_json(self):
         """DB 데이터를 JSON으로 내보내기 (백업용)"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = sqlite3.connect(self.db_path, check_same_thread=False)
             
             export_data = {}
             
@@ -145,7 +153,7 @@ class DartDB:
     def import_db_json(self, json_data):
         """JSON 데이터를 DB로 가져오기"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = sqlite3.connect(self.db_path, check_same_thread=False)
             cursor = conn.cursor()
             
             for table_name, records in json_data.items():
@@ -164,7 +172,7 @@ class DartDB:
     def save_company(self, corp_code, corp_name, stock_code=None):
         """기업 정보 저장"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = sqlite3.connect(self.db_path, check_same_thread=False)
             cursor = conn.cursor()
             
             cursor.execute('''
@@ -183,7 +191,7 @@ class DartDB:
     def save_financial_data(self, corp_code, year, report_type, financial_df):
         """재무 데이터 저장 (중복 데이터 처리 개선)"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = sqlite3.connect(self.db_path, check_same_thread=False)
             cursor = conn.cursor()
             
             # 기존 데이터 삭제 (같은 기업, 연도, 보고서 유형)
@@ -231,7 +239,7 @@ class DartDB:
     def save_financial_metrics(self, corp_code, corp_name, year, report_type, metrics, ratios):
         """재무 지표 요약 저장 (중복 데이터 처리 개선)"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = sqlite3.connect(self.db_path, check_same_thread=False)
             cursor = conn.cursor()
             
             cursor.execute('''
@@ -267,7 +275,7 @@ class DartDB:
     def save_gpt_analysis(self, corp_code, corp_name, question, answer, used_web_search=False):
         """GPT 분석 결과 저장"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = sqlite3.connect(self.db_path, check_same_thread=False)
             cursor = conn.cursor()
             
             cursor.execute('''
@@ -286,7 +294,7 @@ class DartDB:
     def get_companies(self):
         """저장된 기업 목록 조회"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = sqlite3.connect(self.db_path, check_same_thread=False)
             df = pd.read_sql_query('''
                 SELECT corp_code, corp_name, stock_code, 
                        datetime(created_at, 'localtime') as created_at,
@@ -304,7 +312,7 @@ class DartDB:
     def get_financial_data(self, corp_code, year, report_type):
         """저장된 재무 데이터 조회"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = sqlite3.connect(self.db_path, check_same_thread=False)
             
             query = '''
                 SELECT corp_code, year, report_type, account_nm, thstrm_amount, 
@@ -329,7 +337,7 @@ class DartDB:
     def get_financial_metrics(self, corp_code=None, limit=10):
         """재무 지표 조회"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = sqlite3.connect(self.db_path, check_same_thread=False)
             
             if corp_code:
                 query = '''
@@ -356,7 +364,7 @@ class DartDB:
     def get_gpt_analysis_history(self, corp_code=None, limit=10):
         """GPT 분석 기록 조회"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = sqlite3.connect(self.db_path, check_same_thread=False)
             
             if corp_code:
                 query = '''
@@ -388,7 +396,7 @@ class DartDB:
     def get_db_stats(self):
         """데이터베이스 통계 조회"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = sqlite3.connect(self.db_path, check_same_thread=False)
             cursor = conn.cursor()
             
             stats = {}
@@ -1925,7 +1933,7 @@ def main():
             with col2:
                 if st.button("📊 DB 최적화", help="DB 성능을 최적화합니다"):
                     try:
-                        conn = sqlite3.connect(db.db_path)
+                        conn = sqlite3.connect(db.db_path, check_same_thread=False)
                         conn.execute("VACUUM")
                         conn.close()
                         st.success("✅ DB 최적화 완료")
@@ -1936,7 +1944,7 @@ def main():
                 if st.button("🗑️ 전체 삭제", help="⚠️ 모든 데이터를 삭제합니다", type="secondary"):
                     if st.checkbox("정말로 모든 데이터를 삭제하시겠습니까?"):
                         try:
-                            conn = sqlite3.connect(db.db_path)
+                            conn = sqlite3.connect(db.db_path, check_same_thread=False)
                             cursor = conn.cursor()
                             
                             # 모든 테이블 데이터 삭제
