@@ -145,7 +145,7 @@ class DartDB:
     
     def init_db(self):
         """데이터베이스 초기화 및 테이블 생성"""
-        if not self.db_enabled and self.db_path is None:
+        if self.db_path is None:
             return
             
         conn = sqlite3.connect(self.db_path, check_same_thread=False)
