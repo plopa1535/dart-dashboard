@@ -102,86 +102,150 @@ try:
 except:
     pass
 
-# ─── SQLite3 DB 클래스 ────────────────────────────
+# ─── 안전한 SQLite3 DB 클래스 ────────────────────────────
 class DartDB:
     def __init__(self, db_path=None):
-        if db_path is None:
-            # 배포 환경에서는 임시 디렉토리 사용
-            import tempfile
-            import os
-            temp_dir = tempfile.gettempdir()
-            self.db_path = os.path.join(temp_dir, "dart_analysis.db")
-            
-            # Streamlit 세션 상태에 DB 경로 저장
-            if 'db_path' not in st.session_state:
-                st.session_state.db_path = self.db_path
-            else:
-                self.db_path = st.session_state.db_path
-        else:
-            self.db_path = db_path
+        self.db_enabled = False
+        self.db_path = None
         
-        # 안전한 DB 초기화
         try:
-            self.init_db()
+            if db_path is None:
+                # 배포 환경에서는 세션 상태 기반 임시 DB 사용
+                if 'db_enabled' not in st.session_state:
+                    st.session_state.db_enabled = False
+                    st.session_state.db_data = {
+                        'companies': [],
+                        'financial_data': [],
+                        'financial_metrics': [],
+                        'gpt_analysis': []
+                    }
+                
+                # 메모리 기반 DB 시도
+                self.db_path = ":memory:"
+                self.init_db()
+                self.db_enabled = True
+                st.session_state.db_enabled = True
+                
+            else:
+                self.db_path = db_path
+                self.init_db()
+                self.db_enabled = True
+                
         except Exception as e:
-            print(f"DB 초기화 실패, 메모리 모드로 대체: {e}")
-            # DB 초기화 실패 시 메모리 DB 사용
-            self.db_path = ":memory:"
-            self.init_db()
+            # DB 초기화 실패 시 세션 상태만 사용
+            print(f"DB 초기화 실패, 세션 상태로 대체: {e}")
+            self.db_enabled = False
+            if 'db_data' not in st.session_state:
+                st.session_state.db_data = {
+                    'companies': [],
+                    'financial_data': [],
+                    'financial_metrics': [],
+                    'gpt_analysis': []
+                }
     
-    def export_db_json(self):
-        """DB 데이터를 JSON으로 내보내기 (백업용)"""
-        try:
-            conn = sqlite3.connect(self.db_path, check_same_thread=False)
+    def init_db(self):
+        """데이터베이스 초기화 및 테이블 생성"""
+        if not self.db_enabled and self.db_path is None:
+            return
             
-            export_data = {}
-            
-            # 각 테이블의 데이터를 JSON으로 변환
-            tables = ['companies', 'financial_data', 'financial_metrics', 'gpt_analysis']
-            
-            for table in tables:
-                df = pd.read_sql_query(f"SELECT * FROM {table}", conn)
-                export_data[table] = df.to_dict('records')
-            
-            conn.close()
-            return export_data
-            
-        except Exception as e:
-            st.error(f"❌ DB 내보내기 실패: {e}")
-            return None
-    
-    def import_db_json(self, json_data):
-        """JSON 데이터를 DB로 가져오기"""
-        try:
-            conn = sqlite3.connect(self.db_path, check_same_thread=False)
-            cursor = conn.cursor()
-            
-            for table_name, records in json_data.items():
-                if records:  # 데이터가 있는 경우에만
-                    df = pd.DataFrame(records)
-                    df.to_sql(table_name, conn, if_exists='append', index=False)
-            
-            conn.commit()
-            conn.close()
-            return True
-            
-        except Exception as e:
-            st.error(f"❌ DB 가져오기 실패: {e}")
-            return False
+        conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        cursor = conn.cursor()
+        
+        # 기업 정보 테이블
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS companies (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                corp_code TEXT UNIQUE NOT NULL,
+                corp_name TEXT NOT NULL,
+                stock_code TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # 재무 데이터 테이블
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS financial_data (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                corp_code TEXT NOT NULL,
+                year INTEGER NOT NULL,
+                report_type TEXT NOT NULL,
+                account_nm TEXT NOT NULL,
+                thstrm_amount TEXT,
+                frmtrm_amount TEXT,
+                bfefrmtrm_amount TEXT,
+                fs_div TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(corp_code, year, report_type, account_nm)
+            )
+        ''')
+        
+        # 재무 지표 요약 테이블
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS financial_metrics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                corp_code TEXT NOT NULL,
+                corp_name TEXT NOT NULL,
+                year INTEGER NOT NULL,
+                report_type TEXT NOT NULL,
+                revenue REAL,
+                operating_profit REAL,
+                net_income REAL,
+                total_assets REAL,
+                total_liabilities REAL,
+                total_equity REAL,
+                operating_margin REAL,
+                net_margin REAL,
+                roe REAL,
+                roa REAL,
+                debt_ratio REAL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(corp_code, year, report_type)
+            )
+        ''')
+        
+        # GPT 분석 결과 테이블
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS gpt_analysis (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                corp_code TEXT NOT NULL,
+                corp_name TEXT NOT NULL,
+                question TEXT NOT NULL,
+                answer TEXT NOT NULL,
+                used_web_search BOOLEAN DEFAULT FALSE,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        conn.commit()
+        conn.close()
     
     def save_company(self, corp_code, corp_name, stock_code=None):
         """기업 정보 저장"""
         try:
-            conn = sqlite3.connect(self.db_path, check_same_thread=False)
-            cursor = conn.cursor()
+            if self.db_enabled:
+                conn = sqlite3.connect(self.db_path, check_same_thread=False)
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT OR REPLACE INTO companies (corp_code, corp_name, stock_code, updated_at)
+                    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                ''', (corp_code, corp_name, stock_code))
+                conn.commit()
+                conn.close()
+            else:
+                # 세션 상태에 저장
+                company_data = {
+                    'corp_code': corp_code,
+                    'corp_name': corp_name,
+                    'stock_code': stock_code,
+                    'created_at': datetime.now().isoformat()
+                }
+                
+                # 중복 제거
+                existing = [c for c in st.session_state.db_data['companies'] if c['corp_code'] != corp_code]
+                existing.append(company_data)
+                st.session_state.db_data['companies'] = existing
             
-            cursor.execute('''
-                INSERT OR REPLACE INTO companies (corp_code, corp_name, stock_code, updated_at)
-                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-            ''', (corp_code, corp_name, stock_code))
-            
-            conn.commit()
-            conn.close()
             return True
             
         except Exception as e:
@@ -189,44 +253,54 @@ class DartDB:
             return False
     
     def save_financial_data(self, corp_code, year, report_type, financial_df):
-        """재무 데이터 저장 (중복 데이터 처리 개선)"""
+        """재무 데이터 저장"""
         try:
-            conn = sqlite3.connect(self.db_path, check_same_thread=False)
-            cursor = conn.cursor()
-            
-            # 기존 데이터 삭제 (같은 기업, 연도, 보고서 유형)
-            cursor.execute('''
-                DELETE FROM financial_data 
-                WHERE corp_code = ? AND year = ? AND report_type = ?
-            ''', (corp_code, year, report_type))
-            
-            # 새 데이터 삽입 (INSERT OR REPLACE 사용)
-            saved_count = 0
-            for _, row in financial_df.iterrows():
-                try:
-                    cursor.execute('''
-                        INSERT OR REPLACE INTO financial_data 
-                        (corp_code, year, report_type, account_nm, thstrm_amount, frmtrm_amount, bfefrmtrm_amount, fs_div)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (
-                        corp_code, year, report_type,
-                        row.get('account_nm', ''),
-                        row.get('thstrm_amount', ''),
-                        row.get('frmtrm_amount', ''),
-                        row.get('bfefrmtrm_amount', ''),
-                        row.get('fs_div', '')
-                    ))
-                    saved_count += 1
-                except Exception as row_error:
-                    # 개별 행 저장 실패 시 로그만 남기고 계속 진행
-                    print(f"⚠️ 행 저장 실패: {row.get('account_nm', 'Unknown')}, 오류: {row_error}")
-                    continue
-            
-            conn.commit()
-            conn.close()
+            if self.db_enabled:
+                conn = sqlite3.connect(self.db_path, check_same_thread=False)
+                cursor = conn.cursor()
+                
+                cursor.execute('''
+                    DELETE FROM financial_data 
+                    WHERE corp_code = ? AND year = ? AND report_type = ?
+                ''', (corp_code, year, report_type))
+                
+                saved_count = 0
+                for _, row in financial_df.iterrows():
+                    try:
+                        cursor.execute('''
+                            INSERT OR REPLACE INTO financial_data 
+                            (corp_code, year, report_type, account_nm, thstrm_amount, frmtrm_amount, bfefrmtrm_amount, fs_div)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ''', (
+                            corp_code, year, report_type,
+                            row.get('account_nm', ''),
+                            row.get('thstrm_amount', ''),
+                            row.get('frmtrm_amount', ''),
+                            row.get('bfefrmtrm_amount', ''),
+                            row.get('fs_div', '')
+                        ))
+                        saved_count += 1
+                    except:
+                        continue
+                
+                conn.commit()
+                conn.close()
+            else:
+                # 세션 상태에 저장
+                for _, row in financial_df.iterrows():
+                    financial_record = {
+                        'corp_code': corp_code,
+                        'year': year,
+                        'report_type': report_type,
+                        'account_nm': row.get('account_nm', ''),
+                        'thstrm_amount': row.get('thstrm_amount', ''),
+                        'created_at': datetime.now().isoformat()
+                    }
+                    st.session_state.db_data['financial_data'].append(financial_record)
+                saved_count = len(financial_df)
             
             if saved_count > 0:
-                st.success(f"💾 재무 데이터 {saved_count}건이 DB에 저장되었습니다!")
+                st.success(f"💾 재무 데이터 {saved_count}건이 저장되었습니다!")
                 return True
             else:
                 st.warning("⚠️ 저장된 재무 데이터가 없습니다.")
@@ -237,35 +311,51 @@ class DartDB:
             return False
     
     def save_financial_metrics(self, corp_code, corp_name, year, report_type, metrics, ratios):
-        """재무 지표 요약 저장 (중복 데이터 처리 개선)"""
+        """재무 지표 요약 저장"""
         try:
-            conn = sqlite3.connect(self.db_path, check_same_thread=False)
-            cursor = conn.cursor()
+            if self.db_enabled:
+                conn = sqlite3.connect(self.db_path, check_same_thread=False)
+                cursor = conn.cursor()
+                
+                cursor.execute('''
+                    INSERT OR REPLACE INTO financial_metrics 
+                    (corp_code, corp_name, year, report_type, revenue, operating_profit, net_income, 
+                     total_assets, total_liabilities, total_equity, operating_margin, net_margin, 
+                     roe, roa, debt_ratio)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    corp_code, corp_name, year, report_type,
+                    metrics.get('매출액', 0),
+                    metrics.get('영업이익', 0),
+                    metrics.get('당기순이익', 0),
+                    metrics.get('자산총계', 0),
+                    metrics.get('부채총계', 0),
+                    metrics.get('자본총계', 0),
+                    ratios.get('영업이익률', 0),
+                    ratios.get('순이익률', 0),
+                    ratios.get('ROE', 0),
+                    ratios.get('ROA', 0),
+                    ratios.get('부채비율', 0)
+                ))
+                
+                conn.commit()
+                conn.close()
+            else:
+                # 세션 상태에 저장
+                metrics_record = {
+                    'corp_code': corp_code,
+                    'corp_name': corp_name,
+                    'year': year,
+                    'report_type': report_type,
+                    'revenue': metrics.get('매출액', 0),
+                    'operating_profit': metrics.get('영업이익', 0),
+                    'net_income': metrics.get('당기순이익', 0),
+                    'roe': ratios.get('ROE', 0),
+                    'created_at': datetime.now().isoformat()
+                }
+                st.session_state.db_data['financial_metrics'].append(metrics_record)
             
-            cursor.execute('''
-                INSERT OR REPLACE INTO financial_metrics 
-                (corp_code, corp_name, year, report_type, revenue, operating_profit, net_income, 
-                 total_assets, total_liabilities, total_equity, operating_margin, net_margin, 
-                 roe, roa, debt_ratio)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                corp_code, corp_name, year, report_type,
-                metrics.get('매출액', 0),
-                metrics.get('영업이익', 0),
-                metrics.get('당기순이익', 0),
-                metrics.get('자산총계', 0),
-                metrics.get('부채총계', 0),
-                metrics.get('자본총계', 0),
-                ratios.get('영업이익률', 0),
-                ratios.get('순이익률', 0),
-                ratios.get('ROE', 0),
-                ratios.get('ROA', 0),
-                ratios.get('부채비율', 0)
-            ))
-            
-            conn.commit()
-            conn.close()
-            st.success("💾 재무 지표가 DB에 저장되었습니다!")
+            st.success("💾 재무 지표가 저장되었습니다!")
             return True
             
         except Exception as e:
@@ -275,16 +365,29 @@ class DartDB:
     def save_gpt_analysis(self, corp_code, corp_name, question, answer, used_web_search=False):
         """GPT 분석 결과 저장"""
         try:
-            conn = sqlite3.connect(self.db_path, check_same_thread=False)
-            cursor = conn.cursor()
+            if self.db_enabled:
+                conn = sqlite3.connect(self.db_path, check_same_thread=False)
+                cursor = conn.cursor()
+                
+                cursor.execute('''
+                    INSERT INTO gpt_analysis (corp_code, corp_name, question, answer, used_web_search)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (corp_code, corp_name, question, answer, used_web_search))
+                
+                conn.commit()
+                conn.close()
+            else:
+                # 세션 상태에 저장
+                analysis_record = {
+                    'corp_code': corp_code,
+                    'corp_name': corp_name,
+                    'question': question,
+                    'answer': answer,
+                    'used_web_search': used_web_search,
+                    'created_at': datetime.now().isoformat()
+                }
+                st.session_state.db_data['gpt_analysis'].append(analysis_record)
             
-            cursor.execute('''
-                INSERT INTO gpt_analysis (corp_code, corp_name, question, answer, used_web_search)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (corp_code, corp_name, question, answer, used_web_search))
-            
-            conn.commit()
-            conn.close()
             return True
             
         except Exception as e:
@@ -294,68 +397,55 @@ class DartDB:
     def get_companies(self):
         """저장된 기업 목록 조회"""
         try:
-            conn = sqlite3.connect(self.db_path, check_same_thread=False)
-            df = pd.read_sql_query('''
-                SELECT corp_code, corp_name, stock_code, 
-                       datetime(created_at, 'localtime') as created_at,
-                       datetime(updated_at, 'localtime') as updated_at
-                FROM companies 
-                ORDER BY updated_at DESC
-            ''', conn)
-            conn.close()
-            return df
+            if self.db_enabled:
+                conn = sqlite3.connect(self.db_path, check_same_thread=False)
+                df = pd.read_sql_query('''
+                    SELECT corp_code, corp_name, stock_code, 
+                           datetime(created_at, 'localtime') as created_at,
+                           datetime(updated_at, 'localtime') as updated_at
+                    FROM companies 
+                    ORDER BY updated_at DESC
+                ''', conn)
+                conn.close()
+                return df
+            else:
+                # 세션 상태에서 조회
+                companies = st.session_state.db_data.get('companies', [])
+                return pd.DataFrame(companies)
             
         except Exception as e:
             st.error(f"❌ 기업 목록 조회 실패: {e}")
             return pd.DataFrame()
     
-    def get_financial_data(self, corp_code, year, report_type):
-        """저장된 재무 데이터 조회"""
-        try:
-            conn = sqlite3.connect(self.db_path, check_same_thread=False)
-            
-            query = '''
-                SELECT corp_code, year, report_type, account_nm, thstrm_amount, 
-                       frmtrm_amount, bfefrmtrm_amount, fs_div,
-                       datetime(created_at, 'localtime') as created_at
-                FROM financial_data 
-                WHERE corp_code = ? AND year = ? AND report_type = ?
-                ORDER BY account_nm
-            '''
-            df = pd.read_sql_query(query, conn, params=(corp_code, year, report_type))
-            conn.close()
-            
-            if not df.empty:
-                return df
-            else:
-                return None
-            
-        except Exception as e:
-            st.error(f"❌ 재무 데이터 조회 실패: {e}")
-            return None
-    
     def get_financial_metrics(self, corp_code=None, limit=10):
         """재무 지표 조회"""
         try:
-            conn = sqlite3.connect(self.db_path, check_same_thread=False)
-            
-            if corp_code:
-                query = '''
-                    SELECT * FROM financial_metrics 
-                    WHERE corp_code = ?
-                    ORDER BY year DESC, created_at DESC
-                '''
-                df = pd.read_sql_query(query, conn, params=(corp_code,))
+            if self.db_enabled:
+                conn = sqlite3.connect(self.db_path, check_same_thread=False)
+                
+                if corp_code:
+                    query = '''
+                        SELECT * FROM financial_metrics 
+                        WHERE corp_code = ?
+                        ORDER BY year DESC, created_at DESC
+                    '''
+                    df = pd.read_sql_query(query, conn, params=(corp_code,))
+                else:
+                    query = '''
+                        SELECT * FROM financial_metrics 
+                        ORDER BY created_at DESC
+                        LIMIT ?
+                    '''
+                    df = pd.read_sql_query(query, conn, params=(limit,))
+                
+                conn.close()
+                return df
             else:
-                query = '''
-                    SELECT * FROM financial_metrics 
-                    ORDER BY created_at DESC
-                    LIMIT ?
-                '''
-                df = pd.read_sql_query(query, conn, params=(limit,))
-            
-            conn.close()
-            return df
+                # 세션 상태에서 조회
+                metrics = st.session_state.db_data.get('financial_metrics', [])
+                if corp_code:
+                    metrics = [m for m in metrics if m.get('corp_code') == corp_code]
+                return pd.DataFrame(metrics[:limit])
             
         except Exception as e:
             st.error(f"❌ 재무 지표 조회 실패: {e}")
@@ -364,30 +454,37 @@ class DartDB:
     def get_gpt_analysis_history(self, corp_code=None, limit=10):
         """GPT 분석 기록 조회"""
         try:
-            conn = sqlite3.connect(self.db_path, check_same_thread=False)
-            
-            if corp_code:
-                query = '''
-                    SELECT question, answer, used_web_search,
-                           datetime(created_at, 'localtime') as created_at
-                    FROM gpt_analysis 
-                    WHERE corp_code = ?
-                    ORDER BY created_at DESC
-                    LIMIT ?
-                '''
-                df = pd.read_sql_query(query, conn, params=(corp_code, limit))
+            if self.db_enabled:
+                conn = sqlite3.connect(self.db_path, check_same_thread=False)
+                
+                if corp_code:
+                    query = '''
+                        SELECT question, answer, used_web_search,
+                               datetime(created_at, 'localtime') as created_at
+                        FROM gpt_analysis 
+                        WHERE corp_code = ?
+                        ORDER BY created_at DESC
+                        LIMIT ?
+                    '''
+                    df = pd.read_sql_query(query, conn, params=(corp_code, limit))
+                else:
+                    query = '''
+                        SELECT corp_name, question, answer, used_web_search,
+                               datetime(created_at, 'localtime') as created_at
+                        FROM gpt_analysis 
+                        ORDER BY created_at DESC
+                        LIMIT ?
+                    '''
+                    df = pd.read_sql_query(query, conn, params=(limit,))
+                
+                conn.close()
+                return df
             else:
-                query = '''
-                    SELECT corp_name, question, answer, used_web_search,
-                           datetime(created_at, 'localtime') as created_at
-                    FROM gpt_analysis 
-                    ORDER BY created_at DESC
-                    LIMIT ?
-                '''
-                df = pd.read_sql_query(query, conn, params=(limit,))
-            
-            conn.close()
-            return df
+                # 세션 상태에서 조회
+                analysis = st.session_state.db_data.get('gpt_analysis', [])
+                if corp_code:
+                    analysis = [a for a in analysis if a.get('corp_code') == corp_code]
+                return pd.DataFrame(analysis[:limit])
             
         except Exception as e:
             st.error(f"❌ GPT 분석 기록 조회 실패: {e}")
@@ -396,37 +493,40 @@ class DartDB:
     def get_db_stats(self):
         """데이터베이스 통계 조회"""
         try:
-            conn = sqlite3.connect(self.db_path, check_same_thread=False)
-            cursor = conn.cursor()
-            
-            stats = {}
-            
-            # 기업 수
-            cursor.execute("SELECT COUNT(*) FROM companies")
-            stats['companies'] = cursor.fetchone()[0]
-            
-            # 재무 데이터 수
-            cursor.execute("SELECT COUNT(*) FROM financial_data")
-            stats['financial_records'] = cursor.fetchone()[0]
-            
-            # 재무 지표 수
-            cursor.execute("SELECT COUNT(*) FROM financial_metrics")
-            stats['financial_metrics'] = cursor.fetchone()[0]
-            
-            # GPT 분석 수
-            cursor.execute("SELECT COUNT(*) FROM gpt_analysis")
-            stats['gpt_analysis'] = cursor.fetchone()[0]
-            
-            # 데이터베이스 크기
-            stats['db_size'] = os.path.getsize(self.db_path) / 1024 / 1024  # MB
-            
-            conn.close()
-            return stats
+            if self.db_enabled:
+                conn = sqlite3.connect(self.db_path, check_same_thread=False)
+                cursor = conn.cursor()
+                
+                stats = {}
+                cursor.execute("SELECT COUNT(*) FROM companies")
+                stats['companies'] = cursor.fetchone()[0]
+                
+                cursor.execute("SELECT COUNT(*) FROM financial_data")
+                stats['financial_records'] = cursor.fetchone()[0]
+                
+                cursor.execute("SELECT COUNT(*) FROM financial_metrics")
+                stats['financial_metrics'] = cursor.fetchone()[0]
+                
+                cursor.execute("SELECT COUNT(*) FROM gpt_analysis")
+                stats['gpt_analysis'] = cursor.fetchone()[0]
+                
+                stats['db_size'] = 0.1  # 메모리 DB 크기
+                
+                conn.close()
+                return stats
+            else:
+                # 세션 상태 통계
+                return {
+                    'companies': len(st.session_state.db_data.get('companies', [])),
+                    'financial_records': len(st.session_state.db_data.get('financial_data', [])),
+                    'financial_metrics': len(st.session_state.db_data.get('financial_metrics', [])),
+                    'gpt_analysis': len(st.session_state.db_data.get('gpt_analysis', [])),
+                    'db_size': 0.0
+                }
             
         except Exception as e:
             st.error(f"❌ DB 통계 조회 실패: {e}")
             return {}
-
 # ── SerpAPI 검색 함수 (개선된 버전) - 디버깅 강화 ───────────────────────────
 def search_serpapi(query, num=5, engine="google", location="South Korea", hl="ko"):
     """
