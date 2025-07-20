@@ -527,35 +527,35 @@ class DartDB:
         except Exception as e:
             st.error(f"❌ DB 통계 조회 실패: {e}")
             return {}
-        def export_db_json(self):
+    def export_db_json(self):
         """DB 데이터를 JSON으로 내보내기 (백업용)"""
-            try:
-                export_data = {}
+        try:
+            export_data = {}
+            
+            if self.db_enabled:
+                conn = sqlite3.connect(self.db_path, check_same_thread=False)
                 
-                if self.db_enabled:
-                    conn = sqlite3.connect(self.db_path, check_same_thread=False)
-                    
-                    # 각 테이블의 데이터를 JSON으로 변환
-                    tables = ['companies', 'financial_data', 'financial_metrics', 'gpt_analysis']
-                    
-                    for table in tables:
-                        try:
-                            df = pd.read_sql_query(f"SELECT * FROM {table}", conn)
-                            export_data[table] = df.to_dict('records')
-                        except Exception as table_error:
-                            print(f"테이블 {table} 내보내기 실패: {table_error}")
-                            export_data[table] = []
-                    
-                    conn.close()
-                else:
-                    # 세션 상태에서 데이터 내보내기
-                    export_data = st.session_state.db_data.copy()
+                # 각 테이블의 데이터를 JSON으로 변환
+                tables = ['companies', 'financial_data', 'financial_metrics', 'gpt_analysis']
                 
-                return export_data
+                for table in tables:
+                    try:
+                        df = pd.read_sql_query(f"SELECT * FROM {table}", conn)
+                        export_data[table] = df.to_dict('records')
+                    except Exception as table_error:
+                        print(f"테이블 {table} 내보내기 실패: {table_error}")
+                        export_data[table] = []
                 
-            except Exception as e:
-                st.error(f"❌ DB 내보내기 실패: {e}")
-                return None
+                conn.close()
+            else:
+                # 세션 상태에서 데이터 내보내기
+                export_data = st.session_state.db_data.copy()
+            
+            return export_data
+            
+        except Exception as e:
+            st.error(f"❌ DB 내보내기 실패: {e}")
+            return None
     
     def import_db_json(self, json_data):
         """JSON 데이터를 DB로 가져오기"""
