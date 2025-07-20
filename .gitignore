@@ -1,0 +1,16 @@
+# 로컬 데이터베이스 파일
+*.db
+dart_db_backup_*.json
+
+# Python 캐시
+__pycache__/
+*.pyc
+*.pyo
+
+# 환경 변수
+.env
+.streamlit/secrets.toml
+
+# 시스템 파일
+.DS_Store
+Thumbs.db
