@@ -527,6 +527,60 @@ class DartDB:
         except Exception as e:
             st.error(f"❌ DB 통계 조회 실패: {e}")
             return {}
+        def export_db_json(self):
+        """DB 데이터를 JSON으로 내보내기 (백업용)"""
+        try:
+            export_data = {}
+            
+            if self.db_enabled:
+                conn = sqlite3.connect(self.db_path, check_same_thread=False)
+                
+                # 각 테이블의 데이터를 JSON으로 변환
+                tables = ['companies', 'financial_data', 'financial_metrics', 'gpt_analysis']
+                
+                for table in tables:
+                    try:
+                        df = pd.read_sql_query(f"SELECT * FROM {table}", conn)
+                        export_data[table] = df.to_dict('records')
+                    except Exception as table_error:
+                        print(f"테이블 {table} 내보내기 실패: {table_error}")
+                        export_data[table] = []
+                
+                conn.close()
+            else:
+                # 세션 상태에서 데이터 내보내기
+                export_data = st.session_state.db_data.copy()
+            
+            return export_data
+            
+        except Exception as e:
+            st.error(f"❌ DB 내보내기 실패: {e}")
+            return None
+    
+    def import_db_json(self, json_data):
+        """JSON 데이터를 DB로 가져오기"""
+        try:
+            if self.db_enabled:
+                conn = sqlite3.connect(self.db_path, check_same_thread=False)
+                
+                for table_name, records in json_data.items():
+                    if records:  # 데이터가 있는 경우에만
+                        df = pd.DataFrame(records)
+                        df.to_sql(table_name, conn, if_exists='append', index=False)
+                
+                conn.commit()
+                conn.close()
+            else:
+                # 세션 상태로 데이터 가져오기
+                for table_name, records in json_data.items():
+                    if table_name in st.session_state.db_data:
+                        st.session_state.db_data[table_name].extend(records)
+            
+            return True
+            
+        except Exception as e:
+            st.error(f"❌ DB 가져오기 실패: {e}")
+            return False
 # ── SerpAPI 검색 함수 (개선된 버전) - 디버깅 강화 ───────────────────────────
 def search_serpapi(query, num=5, engine="google", location="South Korea", hl="ko"):
     """
